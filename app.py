@@ -1,5 +1,6 @@
 import os
 import io
+import json
 import smtplib
 from email.message import EmailMessage
 from fastapi import FastAPI, Request, Form, UploadFile, File
@@ -29,22 +30,21 @@ MODEL = "openrouter/free"
 
 ATS_SYSTEM_PROMPT = """
 You are a ruthless ATS (Applicant Tracking System) Optimization Algorithm and an Expert Technical Recruiter.
-Your goal is to rewrite the user's raw experience into a resume that scores a 90%+ match on the job description so they get an interview.
+Your goal is to rewrite the user's raw experience into a resume that scores a 90%+ match, AND write a compelling Motivational Letter (Cover Letter) for the same job.
 
 Follow these strict rules:
 1. Analyze the Job Description: Extract the top 10 most critical hard skills, tools, and keywords.
 2. Match: Cross-reference these with the user's raw experience. If the user has done the task (even if they used different words), use the exact terminology from the Job Description.
 3. Rewrite: Use strong action verbs (e.g., "Spearheaded," "Engineered," "Optimized") and quantify results where possible.
-4. Formatting: Use a standard, single-column layout with <h1>, <h2>, <ul>, and <li>. No tables, no columns, no graphics. Fonts must be standard.
-5. Output: ONLY output the raw HTML. Do not include markdown formatting like ```html.
+4. Formatting: Use standard HTML tags (<h1>, <h2>, <ul>, <li>, <p>). Do not include markdown formatting like ```html.
 
-Structure the CV as follows:
-- <h1>[User's Name]</h1>
-- <p>[Target Job Title] | [User's Email] | [User's Phone]</p>
-- <h2>Professional Summary</h2> (3 sentences max, heavily loaded with keywords)
-- <h2>Core Competencies / Skills</h2> (A bulleted list of the matched keywords)
-- <h2>Professional Experience</h2> (Rewrite their experience to highlight ATS keywords)
-- <h2>Education</h2>
+You must output a JSON object with exactly two keys: "cv_html" and "letter_html".
+
+For "cv_html": Format the optimized resume. Include the Target Job Title, Professional Summary, Core Competencies, Professional Experience, and Education.
+For "letter_html": Write a professional 3-paragraph motivational letter. Address it to "Hiring Manager". 
+- Paragraph 1: Express enthusiasm for the role and highlight your biggest matching achievement.
+- Paragraph 2: Explain how your skills directly solve their needs based on the JD.
+- Paragraph 3: Reiterate your interest and request an interview.
 """
 
 def generate_pdf_bytes(html_content: str) -> bytes:
@@ -58,6 +58,7 @@ def generate_pdf_bytes(html_content: str) -> bytes:
             h2 {{ font-size: 13pt; margin-top: 15px; border-bottom: 1px solid #ccc; padding-bottom: 3px; text-transform: uppercase; }}
             ul {{ margin-top: 5px; padding-left: 20px; }}
             li {{ margin-bottom: 4px; }}
+            p {{ margin-bottom: 10px; }}
         </style>
     </head>
     <body>{html_content}</body>
@@ -109,17 +110,21 @@ async def generate_cv(
     MY RAW EXPERIENCE:
     {experience}
     
-    Please generate my optimized ATS CV in HTML based on the rules.
+    Please generate the optimized ATS CV and the Motivational Letter in a valid JSON object.
     """
     try:
         response = client.chat.completions.create(
             model=MODEL,
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": ATS_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
             ],
         )
-        return {"html": response.choices[0].message.content}
+        
+        result = json.loads(response.choices[0].message.content)
+        return result
+        
     except Exception as e:
         return {"error": str(e)}
 
@@ -130,7 +135,7 @@ async def download_pdf(html_content: str = Form(...)):
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=ATS_Optimized_CV.pdf"}
+            headers={"Content-Disposition": "attachment; filename=Optimized_Document.pdf"}
         )
     except Exception as e:
         return {"error": str(e)}
@@ -146,11 +151,11 @@ async def send_email(html_content: str = Form(...), recipient_email: str = Form(
             return {"error": "Email credentials not set in .env"}
 
         msg = EmailMessage()
-        msg['Subject'] = 'Your ATS Optimized CV'
+        msg['Subject'] = 'Your Optimized Job Application Documents'
         msg['From'] = sender
         msg['To'] = recipient_email
-        msg.set_content('Please find your optimized CV attached.')
-        msg.add_attachment(pdf_bytes, maintype='application', subtype='pdf', filename='ATS_CV.pdf')
+        msg.set_content('Please find your optimized document attached.')
+        msg.add_attachment(pdf_bytes, maintype='application', subtype='pdf', filename='Optimized_Document.pdf')
 
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(sender, password)
@@ -176,7 +181,7 @@ async def send_whatsapp(html_content: str = Form(...), phone_number: str = Form(
         message = client_wa.messages.create(
             from_=from_number,
             to=f"whatsapp:{phone_number}",
-            body="Your ATS Optimized CV has been generated successfully! (Note: Twilio sandbox requires a public URL to send the actual PDF file)."
+            body="Your optimized document has been generated successfully! (Note: Twilio sandbox requires a public URL to send the actual PDF file)."
         )
         
         return {"status": "success", "message": f"WhatsApp sent to {phone_number}!"}
